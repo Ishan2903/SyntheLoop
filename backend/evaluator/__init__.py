@@ -7,6 +7,11 @@ from backend.evaluator.metrics import (
     compute_ml_utility,
     evaluate_all,
 )
+from backend.evaluator.prompts import (
+    EVALUATOR_SYSTEM_PROMPT,
+    build_evaluator_prompt,
+)
+from backend.evaluator.llm_evaluator import LLMEvaluator
 
 __all__ = [
     "compute_ks_per_column",
@@ -15,4 +20,8 @@ __all__ = [
     "compute_privacy_dcr",
     "compute_ml_utility",
     "evaluate_all",
+    "EVALUATOR_SYSTEM_PROMPT",
+    "build_evaluator_prompt",
+    "LLMEvaluator",
 ]
+
