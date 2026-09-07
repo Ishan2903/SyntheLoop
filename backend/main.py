@@ -68,6 +68,10 @@ class StartRunRequest(BaseModel):
         default=None,
         description="Maximum optimization loop iterations (defaults to settings.max_iterations_default).",
     )
+    groq_api_key: Optional[str] = Field(
+        default=None,
+        description="Optional Groq API key override for this run (falls back to settings.groq_api_key).",
+    )
 
 
 def default_feedback_loop_factory(
@@ -76,9 +80,11 @@ def default_feedback_loop_factory(
     thresholds: Optional[dict[str, Any]],
     max_iterations: Optional[int],
     audit_trail: AuditTrail,
+    groq_api_key: Optional[str] = None,
 ) -> FeedbackLoop:
     """Instantiates a standard production FeedbackLoop using configured Groq settings."""
-    client = groq.Groq(api_key=settings.groq_api_key or "gsk_dummy")
+    active_key = groq_api_key or settings.groq_api_key or "gsk_dummy"
+    client = groq.Groq(api_key=active_key)
     planner = LLMPlanner(client=client, model=settings.groq_model)
     evaluator = LLMEvaluator(client=client, model=settings.groq_model)
 
@@ -104,6 +110,7 @@ def _execute_pipeline_task(
     target_col: Optional[str],
     thresholds: Optional[dict[str, Any]],
     max_iterations: Optional[int],
+    groq_api_key: Optional[str] = None,
 ) -> None:
     """Executes the iterative feedback loop as a background task and updates state."""
     logger.info(f"Background task started for run_id '{run_id}'")
@@ -116,13 +123,23 @@ def _execute_pipeline_task(
         # Pre-compute EDA for final report generation
         eda_summary = EDAAnalyzer(real_df, target_col=target_col).analyze()
 
-        loop = feedback_loop_factory(
-            df=real_df,
-            target_col=target_col,
-            thresholds=thresholds,
-            max_iterations=max_iterations,
-            audit_trail=audit_trail,
-        )
+        try:
+            loop = feedback_loop_factory(
+                df=real_df,
+                target_col=target_col,
+                thresholds=thresholds,
+                max_iterations=max_iterations,
+                audit_trail=audit_trail,
+                groq_api_key=groq_api_key,
+            )
+        except TypeError:
+            loop = feedback_loop_factory(
+                real_df,
+                target_col,
+                thresholds,
+                max_iterations,
+                audit_trail,
+            )
 
         result = loop.run()
 
@@ -316,6 +333,7 @@ def start_run(
         target_col=request.target_col,
         thresholds=request.thresholds,
         max_iterations=request.max_iterations,
+        groq_api_key=request.groq_api_key,
     )
 
     return {
