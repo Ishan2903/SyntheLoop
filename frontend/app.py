@@ -53,10 +53,24 @@ CUSTOM_CSS = """
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
     }
 
-    /* Remove default top padding */
+    /* Hide Streamlit default header, Deploy button, and hamburger menu */
+    [data-testid="stHeader"] {
+        display: none !important;
+    }
+    .stDeployButton {
+        display: none !important;
+    }
+    #MainMenu {
+        visibility: hidden !important;
+    }
+    footer {
+        visibility: hidden !important;
+    }
+
+    /* Clean top spacing */
     .block-container {
-        padding-top: 1rem;
-        padding-bottom: 2rem;
+        padding-top: 1.5rem !important;
+        padding-bottom: 2rem !important;
         max-width: 98% !important;
     }
 
@@ -114,6 +128,13 @@ CUSTOM_CSS = """
         background-color: #6E8B3D;
         box-shadow: 0 0 6px rgba(110, 139, 61, 0.7);
     }
+    .led-dot-pending {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background-color: #D4A359;
+        box-shadow: 0 0 6px rgba(212, 163, 89, 0.7);
+    }
     .led-dot-offline {
         width: 8px;
         height: 8px;
@@ -129,6 +150,14 @@ CUSTOM_CSS = """
         font-size: 0.8rem;
         color: #9CA3AF;
         font-family: monospace;
+    }
+
+    /* Native Container Box Framing */
+    [data-testid="stVerticalBlockBorderWrapper"] {
+        background-color: #0E1013 !important;
+        border: 1px solid #1F232B !important;
+        border-radius: 8px !important;
+        padding: 16px !important;
     }
 
     /* Telemetry Ribbon */
@@ -559,10 +588,18 @@ with st.sidebar:
 # Top Navigation Bar
 # -----------------------------------------------------------------------------
 is_api_online = check_api_health(API_BASE_URL)
-api_status_html = (
-    '<span class="syntheloop-status-pill"><span class="led-dot"></span> API Connected</span>'
+has_groq_key = bool(st.session_state.get("groq_api_key"))
+
+backend_status_html = (
+    '<span class="syntheloop-status-pill"><span class="led-dot"></span> Backend: Online</span>'
     if is_api_online
-    else '<span class="syntheloop-status-pill"><span class="led-dot-offline"></span> API Offline (Check Port 8000)</span>'
+    else '<span class="syntheloop-status-pill"><span class="led-dot-offline"></span> Backend: Offline</span>'
+)
+
+groq_status_html = (
+    '<span class="syntheloop-status-pill"><span class="led-dot"></span> Groq LLM: Ready</span>'
+    if has_groq_key
+    else '<span class="syntheloop-status-pill"><span class="led-dot-pending"></span> Groq LLM: Key Needed</span>'
 )
 
 dataset_info_str = (
@@ -578,7 +615,8 @@ st.markdown(
         <div class="syntheloop-brand">
             <span class="syntheloop-logo-text">SyntheLoop</span>
             <span class="syntheloop-version-pill">v1.0</span>
-            {api_status_html}
+            {backend_status_html}
+            {groq_status_html}
         </div>
         <div class="syntheloop-nav-right">
             <span class="dataset-pill">📁 {dataset_info_str}</span>
@@ -709,264 +747,297 @@ col_left, col_center, col_right = st.columns([1.1, 1.5, 1.4], gap="medium")
 # Left Column: Target & Guardrails Controls
 # =============================================================================
 with col_left:
-    st.markdown('<div class="panel-box">', unsafe_allow_html=True)
-    st.markdown('<div class="panel-title">⚙️ Target & Guardrails</div>', unsafe_allow_html=True)
+    with st.container(border=True):
+        st.markdown('<div class="panel-title">⚙️ Target & Guardrails</div>', unsafe_allow_html=True)
 
-    # Ingestion Source Tabs
-    ingest_tab1, ingest_tab2 = st.tabs(["Upload CSV", "Demo Sample"])
+        # Groq API Key Input Field (Prominent in main UI)
+        st.markdown("<div style='font-size:0.75rem; font-weight:600; color:#8C939E; margin-bottom:4px;'>🔑 GROQ API KEY</div>", unsafe_allow_html=True)
+        env_groq_key = os.getenv("GROQ_API_KEY", "")
+        current_groq_key = st.session_state.get("groq_api_key", env_groq_key)
+        user_key = st.text_input(
+            "Groq API Key",
+            value=current_groq_key,
+            type="password",
+            placeholder="gsk_...",
+            label_visibility="collapsed",
+            help="Required for LLM Planner & Evaluator (llama-3.3-70b-versatile).",
+        )
+        st.session_state.groq_api_key = user_key.strip() if user_key else ""
+        if st.session_state.groq_api_key:
+            st.markdown('<div style="color:#7E9E48; font-size:0.75rem; font-family:monospace; margin-bottom:10px;">● API Key Configured & Ready</div>', unsafe_allow_html=True)
+        else:
+            st.markdown('<div style="color:#D4A359; font-size:0.75rem; font-family:monospace; margin-bottom:10px;">⚠️ Enter your Groq API Key (gsk_...) to run the loop</div>', unsafe_allow_html=True)
 
-    with ingest_tab1:
-        uploaded_file = st.file_uploader("Upload CSV dataset", type=["csv"], label_visibility="collapsed")
-        if uploaded_file is not None:
-            if st.session_state.filename != uploaded_file.name:
-                with st.spinner("Analyzing dataset via EDA module..."):
-                    try:
-                        content_bytes = uploaded_file.getvalue()
-                        upload_res = upload_dataset(API_BASE_URL, content_bytes, uploaded_file.name)
-                        st.session_state.run_id = upload_res["run_id"]
-                        st.session_state.eda_summary = upload_res["eda_summary"]
-                        st.session_state.filename = uploaded_file.name
-                        st.session_state.raw_df = pd.read_csv(io.BytesIO(content_bytes))
-                        append_terminal_log(f"uploaded '{uploaded_file.name}' (run_id: {upload_res['run_id']})")
-                        append_terminal_log(f"EDA complete: {upload_res['eda_summary']['n_rows']} rows, {upload_res['eda_summary']['n_cols']} columns")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Upload error: {e}")
+        st.markdown("<hr style='border-color:#1E2229; margin:4px 0 12px 0;'>", unsafe_allow_html=True)
 
-    with ingest_tab2:
-        st.caption("Quickly test with built-in sample churn dataset:")
-        sample_path = "data/samples/sample_churn.csv"
-        if st.button("Load Sample Churn Dataset", use_container_width=True):
-            if os.path.exists(sample_path):
-                with st.spinner("Loading sample dataset..."):
-                    try:
-                        with open(sample_path, "rb") as f:
-                            sample_bytes = f.read()
-                        upload_res = upload_dataset(API_BASE_URL, sample_bytes, "sample_churn.csv")
-                        st.session_state.run_id = upload_res["run_id"]
-                        st.session_state.eda_summary = upload_res["eda_summary"]
-                        st.session_state.filename = "sample_churn.csv"
-                        st.session_state.raw_df = pd.read_csv(io.BytesIO(sample_bytes))
-                        append_terminal_log(f"loaded sample dataset 'sample_churn.csv' (run_id: {upload_res['run_id']})")
-                        append_terminal_log(f"EDA complete: {upload_res['eda_summary']['n_rows']} rows, {upload_res['eda_summary']['n_cols']} columns")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Error loading sample: {e}")
-            else:
-                st.warning(f"File '{sample_path}' not found.")
+        # Ingestion Source Tabs
+        st.markdown("<div style='font-size:0.75rem; font-weight:600; color:#8C939E; margin-bottom:4px;'>📁 DATASET INGESTION</div>", unsafe_allow_html=True)
+        ingest_tab1, ingest_tab2 = st.tabs(["Upload CSV", "Demo Sample"])
 
-    st.markdown("<hr style='border-color:#1E2229; margin:12px 0;'>", unsafe_allow_html=True)
+        with ingest_tab1:
+            uploaded_file = st.file_uploader("Upload CSV dataset", type=["csv"], label_visibility="collapsed")
+            if uploaded_file is not None:
+                if st.session_state.filename != uploaded_file.name:
+                    with st.spinner("Analyzing dataset via EDA module..."):
+                        try:
+                            content_bytes = uploaded_file.getvalue()
+                            upload_res = upload_dataset(API_BASE_URL, content_bytes, uploaded_file.name)
+                            st.session_state.run_id = upload_res["run_id"]
+                            st.session_state.eda_summary = upload_res["eda_summary"]
+                            st.session_state.filename = uploaded_file.name
+                            st.session_state.raw_df = pd.read_csv(io.BytesIO(content_bytes))
+                            append_terminal_log(f"uploaded '{uploaded_file.name}' (run_id: {upload_res['run_id']})")
+                            append_terminal_log(f"EDA complete: {upload_res['eda_summary']['n_rows']} rows, {upload_res['eda_summary']['n_cols']} columns")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Upload error: {e}")
 
-    # Target Column Selector
-    col_names = []
-    if st.session_state.eda_summary and "columns" in st.session_state.eda_summary:
-        col_names = list(st.session_state.eda_summary["columns"].keys())
+        with ingest_tab2:
+            st.caption("Quickly test with built-in sample churn dataset:")
+            sample_path = "data/samples/sample_churn.csv"
+            if st.button("Load Sample Churn Dataset", use_container_width=True):
+                if os.path.exists(sample_path):
+                    with st.spinner("Loading sample dataset..."):
+                        try:
+                            with open(sample_path, "rb") as f:
+                                sample_bytes = f.read()
+                            upload_res = upload_dataset(API_BASE_URL, sample_bytes, "sample_churn.csv")
+                            st.session_state.run_id = upload_res["run_id"]
+                            st.session_state.eda_summary = upload_res["eda_summary"]
+                            st.session_state.filename = "sample_churn.csv"
+                            st.session_state.raw_df = pd.read_csv(io.BytesIO(sample_bytes))
+                            append_terminal_log(f"loaded sample dataset 'sample_churn.csv' (run_id: {upload_res['run_id']})")
+                            append_terminal_log(f"EDA complete: {upload_res['eda_summary']['n_rows']} rows, {upload_res['eda_summary']['n_cols']} columns")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Error loading sample: {e}")
+                else:
+                    st.warning(f"File '{sample_path}' not found.")
 
-    # Pre-select 'churn' or target if present
-    default_target_idx = 0
-    if col_names:
-        for idx, col_name in enumerate(["None"] + col_names):
-            if col_name.lower() in ("churn", "income", "target", "label"):
-                default_target_idx = idx
-                break
+        st.markdown("<hr style='border-color:#1E2229; margin:12px 0;'>", unsafe_allow_html=True)
 
-    target_col_selection = st.selectbox(
-        "Target Column (Optional)",
-        options=["None"] + col_names,
-        index=default_target_idx,
-        help="Column to evaluate class balance and downstream ML utility.",
-    )
-    chosen_target = None if target_col_selection == "None" else target_col_selection
+        # Target Column Selector
+        col_names = []
+        if st.session_state.eda_summary and "columns" in st.session_state.eda_summary:
+            col_names = list(st.session_state.eda_summary["columns"].keys())
 
-    # Guardrail Sliders
-    st.markdown("<div style='font-size:0.75rem; font-weight:600; color:#8C939E; margin-top:8px; margin-bottom:4px;'>OPTIMIZATION GUARDRAILS</div>", unsafe_allow_html=True)
+        default_target_idx = 0
+        if col_names:
+            for idx, col_name in enumerate(["None"] + col_names):
+                if col_name.lower() in ("churn", "income", "target", "label"):
+                    default_target_idx = idx
+                    break
 
-    t_ks = st.slider("KS Statistic Max (Fidelity)", 0.05, 0.40, 0.15, 0.01)
-    t_corr = st.slider("Correlation Diff Max (Frobenius)", 0.05, 0.40, 0.20, 0.01)
-    t_js = st.slider("JS Divergence Max (Class Balance)", 0.01, 0.30, 0.10, 0.01)
-    t_dcr = st.slider("Privacy DCR 5th Percentile Floor", 1, 20, 5, 1)
-    t_util = st.slider("Utility AUC Drop Max", 0.01, 0.30, 0.10, 0.01)
+        target_col_selection = st.selectbox(
+            "Target Column (Optional)",
+            options=["None"] + col_names,
+            index=default_target_idx,
+            help="Column to evaluate class balance and downstream ML utility.",
+        )
+        chosen_target = None if target_col_selection == "None" else target_col_selection
 
-    max_iterations_input = st.number_input("Max Iterations Budget", min_value=1, max_value=10, value=3, step=1)
-    st.session_state.max_iterations = max_iterations_input
+        # Guardrail Sliders
+        st.markdown("<div style='font-size:0.75rem; font-weight:600; color:#8C939E; margin-top:10px; margin-bottom:4px;'>OPTIMIZATION GUARDRAILS</div>", unsafe_allow_html=True)
 
-    thresholds_payload = {
-        "ks_stat_max": t_ks,
-        "corr_diff_max": t_corr,
-        "js_divergence_max": t_js,
-        "dcr_min_percentile": t_dcr,
-        "utility_auc_drop_max": t_util,
-    }
+        t_ks = st.slider("KS Statistic Max (Fidelity)", 0.05, 0.40, 0.15, 0.01)
+        t_corr = st.slider("Correlation Diff Max (Frobenius)", 0.05, 0.40, 0.20, 0.01)
+        t_js = st.slider("JS Divergence Max (Class Balance)", 0.01, 0.30, 0.10, 0.01)
+        t_dcr = st.slider("Privacy DCR 5th Percentile Floor", 1, 20, 5, 1)
+        t_util = st.slider("Utility AUC Drop Max", 0.01, 0.30, 0.10, 0.01)
 
-    # Start Optimization Loop Button
-    st.markdown("<div style='margin-top:14px;'>", unsafe_allow_html=True)
-    can_start = bool(st.session_state.run_id and not st.session_state.is_running and is_api_online)
+        max_iterations_input = st.number_input("Max Iterations Budget", min_value=1, max_value=10, value=3, step=1)
+        st.session_state.max_iterations = max_iterations_input
 
-    if st.button("▶  Start Optimization Loop", key="start_btn", type="primary", disabled=not can_start):
-        try:
-            start_res = trigger_start_run(
-                API_BASE_URL,
-                st.session_state.run_id,
-                chosen_target,
-                thresholds_payload,
-                max_iterations_input,
-                groq_api_key=st.session_state.get("groq_api_key") or None,
-            )
-            st.session_state.is_running = True
-            st.session_state.run_status = "running"
-            st.session_state.start_time = time.time()
-            st.session_state.iteration = 0
-            append_terminal_log(f"starting feedback loop for run_id '{st.session_state.run_id}'...")
-            append_terminal_log(f"target_col='{chosen_target}', max_iter={max_iterations_input}")
-            append_terminal_log("dispatching background pipeline task...")
-            st.rerun()
-        except Exception as err:
-            st.error(f"Failed to start run: {err}")
+        thresholds_payload = {
+            "ks_stat_max": t_ks,
+            "corr_diff_max": t_corr,
+            "js_divergence_max": t_js,
+            "dcr_min_percentile": t_dcr,
+            "utility_auc_drop_max": t_util,
+        }
 
-    st.markdown("</div>", unsafe_allow_html=True)
-    st.markdown("</div>", unsafe_allow_html=True)
+        # Start Optimization Loop Button & Status Guards
+        has_dataset = bool(st.session_state.run_id)
+        has_key = bool(st.session_state.groq_api_key)
+        can_start = bool(has_dataset and has_key and not st.session_state.is_running and is_api_online)
+
+        st.markdown("<div style='margin-top:14px;'>", unsafe_allow_html=True)
+        if st.button("▶  Start Optimization Loop", key="start_btn", type="primary", disabled=not can_start):
+            try:
+                start_res = trigger_start_run(
+                    API_BASE_URL,
+                    st.session_state.run_id,
+                    chosen_target,
+                    thresholds_payload,
+                    max_iterations_input,
+                    groq_api_key=st.session_state.get("groq_api_key") or None,
+                )
+                st.session_state.is_running = True
+                st.session_state.run_status = "running"
+                st.session_state.start_time = time.time()
+                st.session_state.iteration = 0
+                append_terminal_log(f"starting feedback loop for run_id '{st.session_state.run_id}'...")
+                append_terminal_log(f"target_col='{chosen_target}', max_iter={max_iterations_input}")
+                append_terminal_log("dispatching background pipeline task...")
+                st.rerun()
+            except Exception as err:
+                st.error(f"Failed to start run: {err}")
+
+        # Help caption guiding the user
+        if not has_key:
+            st.caption("⚠️ Please enter your Groq API Key above to start")
+        elif not has_dataset:
+            st.caption("⚠️ Upload a CSV or click 'Load Sample Churn Dataset'")
+        elif not is_api_online:
+            st.caption("⚠️ FastAPI backend is offline (check port 8000)")
+        elif st.session_state.is_running:
+            st.caption("⏳ Optimization loop is actively running...")
+        else:
+            st.caption("🟢 Ready to start optimization loop")
+
+        st.markdown("</div>", unsafe_allow_html=True)
 
 
 # =============================================================================
 # Center Column: Real vs Synthetic Data Explorer
 # =============================================================================
 with col_center:
-    st.markdown('<div class="panel-box">', unsafe_allow_html=True)
-    st.markdown('<div class="panel-title">📊 Data Explorer & Distributions</div>', unsafe_allow_html=True)
+    with st.container(border=True):
+        st.markdown('<div class="panel-title">📊 Data Explorer & Distributions</div>', unsafe_allow_html=True)
 
-    tab_data, tab_eda, tab_corrs = st.tabs(["Real vs Synthetic", "Column Profiles", "Correlations"])
+        tab_data, tab_eda, tab_corrs = st.tabs(["Real vs Synthetic", "Column Profiles", "Correlations"])
 
-    with tab_data:
-        if st.session_state.raw_df is not None:
-            # Check if synthetic data has been generated
-            if st.session_state.synthetic_df is None and st.session_state.run_id:
-                synth_bytes = fetch_artifact_bytes(API_BASE_URL, st.session_state.run_id, "dataset")
-                if synth_bytes:
-                    try:
-                        st.session_state.synthetic_df = pd.read_csv(io.BytesIO(synth_bytes))
-                    except Exception:
-                        pass
+        with tab_data:
+            if st.session_state.raw_df is not None:
+                # Check if synthetic data has been generated
+                if st.session_state.synthetic_df is None and st.session_state.run_id:
+                    synth_bytes = fetch_artifact_bytes(API_BASE_URL, st.session_state.run_id, "dataset")
+                    if synth_bytes:
+                        try:
+                            st.session_state.synthetic_df = pd.read_csv(io.BytesIO(synth_bytes))
+                        except Exception:
+                            pass
 
-            if st.session_state.synthetic_df is not None:
-                st.caption(f"Comparing first 5 rows: Real vs Synthetic ({st.session_state.filename})")
-                col_sub1, col_sub2 = st.columns(2)
-                with col_sub1:
-                    st.markdown("**Real Dataset Sample**")
-                    st.dataframe(st.session_state.raw_df.head(5), height=240, use_container_width=True)
-                with col_sub2:
-                    st.markdown("**Synthetic Output Sample**")
-                    st.dataframe(st.session_state.synthetic_df.head(5), height=240, use_container_width=True)
+                if st.session_state.synthetic_df is not None:
+                    st.caption(f"Comparing first 5 rows: Real vs Synthetic ({st.session_state.filename})")
+                    col_sub1, col_sub2 = st.columns(2)
+                    with col_sub1:
+                        st.markdown("**Real Dataset Sample**")
+                        st.dataframe(st.session_state.raw_df.head(5), height=240, use_container_width=True)
+                    with col_sub2:
+                        st.markdown("**Synthetic Output Sample**")
+                        st.dataframe(st.session_state.synthetic_df.head(5), height=240, use_container_width=True)
+                else:
+                    st.caption(f"Real Data Preview ({st.session_state.filename}):")
+                    st.dataframe(st.session_state.raw_df.head(10), height=380, use_container_width=True)
             else:
-                st.caption(f"Real Data Preview ({st.session_state.filename}):")
-                st.dataframe(st.session_state.raw_df.head(10), height=380, use_container_width=True)
-        else:
-            st.info("Upload a dataset or load the sample churn data on the left to inspect records.")
+                st.info("Upload a dataset or load the sample churn data on the left to inspect records.")
 
-    with tab_eda:
-        if st.session_state.eda_summary and "columns" in st.session_state.eda_summary:
-            summary_cols = []
-            for col, details in st.session_state.eda_summary["columns"].items():
-                summary_cols.append({
-                    "Column": col,
-                    "Type": details.get("type", "unknown"),
-                    "Dtype": details.get("dtype", "unknown"),
-                    "Missing %": f"{details.get('missing_pct', 0.0):.1f}%",
-                    "Unique": details.get("n_unique", 0),
-                    "Mean": round(details["mean"], 2) if "mean" in details else "—",
-                    "Std": round(details["std"], 2) if "std" in details else "—",
-                })
-            st.dataframe(pd.DataFrame(summary_cols), height=380, use_container_width=True)
-        else:
-            st.info("EDA column profiles will populate once a CSV is loaded.")
-
-    with tab_corrs:
-        if st.session_state.eda_summary and "correlation_matrix" in st.session_state.eda_summary:
-            corr_mat = st.session_state.eda_summary["correlation_matrix"]
-            if corr_mat:
-                st.dataframe(pd.DataFrame(corr_mat), height=380, use_container_width=True)
+        with tab_eda:
+            if st.session_state.eda_summary and "columns" in st.session_state.eda_summary:
+                summary_cols = []
+                for col, details in st.session_state.eda_summary["columns"].items():
+                    summary_cols.append({
+                        "Column": col,
+                        "Type": details.get("type", "unknown"),
+                        "Dtype": details.get("dtype", "unknown"),
+                        "Missing %": f"{details.get('missing_pct', 0.0):.1f}%",
+                        "Unique": details.get("n_unique", 0),
+                        "Mean": round(details["mean"], 2) if "mean" in details else "—",
+                        "Std": round(details["std"], 2) if "std" in details else "—",
+                    })
+                st.dataframe(pd.DataFrame(summary_cols), height=380, use_container_width=True)
             else:
-                st.info("Fewer than 2 continuous columns detected for correlation matrix.")
-        else:
-            st.info("Correlation matrix available upon dataset upload.")
+                st.info("EDA column profiles will populate once a CSV is loaded.")
 
-    # Bottom Export Action Bar (Visible when run completes or artifacts exist)
-    st.markdown("<hr style='border-color:#1E2229; margin:12px 0 8px 0;'>", unsafe_allow_html=True)
-    st.markdown("<div style='font-size:0.75rem; font-weight:600; color:#8C939E; margin-bottom:8px;'>EXPORT RUN ARTIFACTS</div>", unsafe_allow_html=True)
+        with tab_corrs:
+            if st.session_state.eda_summary and "correlation_matrix" in st.session_state.eda_summary:
+                corr_mat = st.session_state.eda_summary["correlation_matrix"]
+                if corr_mat:
+                    st.dataframe(pd.DataFrame(corr_mat), height=380, use_container_width=True)
+                else:
+                    st.info("Fewer than 2 continuous columns detected for correlation matrix.")
+            else:
+                st.info("Correlation matrix available upon dataset upload.")
 
-    d_col1, d_col2, d_col3 = st.columns(3)
+        # Bottom Export Action Bar (Visible when run completes or artifacts exist)
+        st.markdown("<hr style='border-color:#1E2229; margin:12px 0 8px 0;'>", unsafe_allow_html=True)
+        st.markdown("<div style='font-size:0.75rem; font-weight:600; color:#8C939E; margin-bottom:8px;'>EXPORT RUN ARTIFACTS</div>", unsafe_allow_html=True)
 
-    dataset_bytes = fetch_artifact_bytes(API_BASE_URL, st.session_state.run_id, "dataset") if st.session_state.run_id else None
-    report_bytes = fetch_artifact_bytes(API_BASE_URL, st.session_state.run_id, "report") if st.session_state.run_id else None
-    trail_bytes = fetch_artifact_bytes(API_BASE_URL, st.session_state.run_id, "audit_trail") if st.session_state.run_id else None
+        d_col1, d_col2, d_col3 = st.columns(3)
 
-    with d_col1:
-        st.download_button(
-            label="📄 Synthetic CSV",
-            data=dataset_bytes or b"",
-            file_name=f"synthetic_{st.session_state.run_id or 'sample'}.csv",
-            mime="text/csv",
-            disabled=dataset_bytes is None,
-            use_container_width=True,
-        )
-    with d_col2:
-        st.download_button(
-            label="📊 HTML Report",
-            data=report_bytes or b"",
-            file_name=f"report_{st.session_state.run_id or 'sample'}.html",
-            mime="text/html",
-            disabled=report_bytes is None,
-            use_container_width=True,
-        )
-    with d_col3:
-        st.download_button(
-            label="🔍 Audit Trail",
-            data=trail_bytes or b"",
-            file_name=f"audit_trail_{st.session_state.run_id or 'sample'}.json",
-            mime="application/json",
-            disabled=trail_bytes is None,
-            use_container_width=True,
-        )
+        dataset_bytes = fetch_artifact_bytes(API_BASE_URL, st.session_state.run_id, "dataset") if st.session_state.run_id else None
+        report_bytes = fetch_artifact_bytes(API_BASE_URL, st.session_state.run_id, "report") if st.session_state.run_id else None
+        trail_bytes = fetch_artifact_bytes(API_BASE_URL, st.session_state.run_id, "audit_trail") if st.session_state.run_id else None
 
-    st.markdown("</div>", unsafe_allow_html=True)
+        with d_col1:
+            st.download_button(
+                label="📄 Synthetic CSV",
+                data=dataset_bytes or b"",
+                file_name=f"synthetic_{st.session_state.run_id or 'sample'}.csv",
+                mime="text/csv",
+                disabled=dataset_bytes is None,
+                use_container_width=True,
+            )
+        with d_col2:
+            st.download_button(
+                label="📊 HTML Report",
+                data=report_bytes or b"",
+                file_name=f"report_{st.session_state.run_id or 'sample'}.html",
+                mime="text/html",
+                disabled=report_bytes is None,
+                use_container_width=True,
+            )
+        with d_col3:
+            st.download_button(
+                label="🔍 Audit Trail",
+                data=trail_bytes or b"",
+                file_name=f"audit_trail_{st.session_state.run_id or 'sample'}.json",
+                mime="application/json",
+                disabled=trail_bytes is None,
+                use_container_width=True,
+            )
 
 
 # =============================================================================
 # Right Column: 3rd Box — Dedicated LLM Terminal Output (`SyntheLoop> `)
 # =============================================================================
 with col_right:
-    # Dedicated terminal styling matching exact user specifications
-    terminal_lines = []
-    for log_line in st.session_state.terminal_logs:
-        # Highlight PASS / FAIL in terminal
-        clean_line = log_line.replace("<", "&lt;").replace(">", "&gt;")
-        if "PASS" in clean_line:
-            clean_line = clean_line.replace("PASS", '<span class="t-highlight-pass">PASS</span>')
-        if "FAIL" in clean_line:
-            clean_line = clean_line.replace("FAIL", '<span class="t-highlight-fail">FAIL</span>')
-        terminal_lines.append(f'<div class="t-line">{clean_line}</div>')
+    with st.container(border=True):
+        st.markdown('<div class="panel-title">🧠 LLM Planner & Diagnosis Terminal</div>', unsafe_allow_html=True)
 
-    terminal_content_html = "".join(terminal_lines)
+        # Dedicated terminal styling matching exact user specifications
+        terminal_lines = []
+        for log_line in st.session_state.terminal_logs:
+            clean_line = log_line.replace("<", "&lt;").replace(">", "&gt;")
+            if "PASS" in clean_line:
+                clean_line = clean_line.replace("PASS", '<span class="t-highlight-pass">PASS</span>')
+            if "FAIL" in clean_line:
+                clean_line = clean_line.replace("FAIL", '<span class="t-highlight-fail">FAIL</span>')
+            terminal_lines.append(f'<div class="t-line">{clean_line}</div>')
 
-    st.markdown(
-        f"""
-        <div class="terminal-window">
-            <div class="terminal-topbar">
-                <div class="terminal-dots">
-                    <span class="t-dot t-dot-red"></span>
-                    <span class="t-dot t-dot-yellow"></span>
-                    <span class="t-dot t-dot-green"></span>
+        terminal_content_html = "".join(terminal_lines)
+
+        st.markdown(
+            f"""
+            <div class="terminal-window">
+                <div class="terminal-topbar">
+                    <div class="terminal-dots">
+                        <span class="t-dot t-dot-red"></span>
+                        <span class="t-dot t-dot-yellow"></span>
+                        <span class="t-dot t-dot-green"></span>
+                    </div>
+                    <span class="terminal-title">LLM Planner Reasoning & Refinement Diagnosis</span>
+                    <span style="font-size:0.7rem; color:#5A6E36; font-family:monospace;">bash (syntheloop-env)</span>
                 </div>
-                <span class="terminal-title">LLM Planner Reasoning & Refinement Diagnosis</span>
-                <span style="font-size:0.7rem; color:#5A6E36; font-family:monospace;">bash (syntheloop-env)</span>
+                <div class="terminal-body" id="terminal-body-container">
+                    {terminal_content_html}
+                    <div class="t-line"><span class="t-prompt">SyntheLoop&gt;</span> <span class="t-cursor"></span></div>
+                </div>
             </div>
-            <div class="terminal-body" id="terminal-body-container">
-                {terminal_content_html}
-                <div class="t-line"><span class="t-prompt">SyntheLoop&gt;</span> <span class="t-cursor"></span></div>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+            """,
+            unsafe_allow_html=True,
+        )
 
 
 # -----------------------------------------------------------------------------
@@ -1035,6 +1106,9 @@ if st.session_state.is_running and st.session_state.run_id:
                     st.session_state.synthetic_df = pd.read_csv(io.BytesIO(synth_bytes))
                 except Exception:
                     pass
+
+            # Trigger a final rerun to render completion or error in terminal and enable downloads
+            st.rerun()
 
         # Brief pause then rerun while running to update UI live
         if st.session_state.is_running:

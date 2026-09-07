@@ -100,8 +100,19 @@ class SyntheticGenerator:
                 verbose=False,
             )
 
+            # Prepare training DataFrame: CTGAN requires continuous columns to have no NaN values
+            train_df = real_df.copy()
+            for col in train_df.columns:
+                if col in configured_cat_cols:
+                    if train_df[col].isna().any():
+                        train_df[col] = train_df[col].fillna("Missing").astype(str)
+                else:
+                    if train_df[col].isna().any():
+                        col_median = train_df[col].median()
+                        train_df[col] = train_df[col].fillna(col_median if pd.notna(col_median) else 0.0)
+
             # Fit model with discrete/categorical columns
-            self.model.fit(real_df, discrete_columns=configured_cat_cols)
+            self.model.fit(train_df, discrete_columns=configured_cat_cols)
             self._fitted = True
 
         except Exception as e:
